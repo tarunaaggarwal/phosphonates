@@ -1,0 +1,203 @@
+---
+title: "presence_absence_heatmaps_METABOLIC"
+author: "Taruna Schuelke"
+date: "08 July 2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE) # this means your code will be generated alongside your output (i.e., data visuals/model summaries)
+knitr::opts_chunk$set(message = FALSE) # this means the message from commands won't be printed out in the .html file
+knitr::opts_chunk$set(warning = FALSE) # this means the warning from commands won't be printed out in the .html file
+```
+
+## Step 1. Load libraries
+```{r libraries}
+# Load required libraries
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(readxl)
+library(GGally)
+library(tidyr)
+library(pheatmap)
+library(tidyverse)
+```
+
+
+### Step 2. Read in the functions presence/absence data. Make sure the "Present" & "Absent" strings are replaced with 1 and 0, respectively.
+
+```{r CSVfiles}
+metabolic_function <- read.csv("METABOLIC_result_worksheet2.tsv",  sep = "\t")
+simple_IDs <- read.csv("Bin_ID_to_Mag_ID.csv")
+```
+
+### Step 3. Always `View` your data
+```{r}
+View(metabolic_function)
+```
+
+
+### Step 4. Check if the *Function* column contains unique functions
+```{r}
+# Extract the Function column
+function_column <- metabolic_function$Function
+
+# Check for uniqueness
+unique_functions <- unique(function_column)
+
+# Compare the length of unique values with the original column length
+is_unique <- length(unique_functions) == length(function_column)
+
+# Print the result
+if (is_unique) {
+  print("The Function column contains all unique strings.")
+} else {
+  print("The Function column contains duplicate strings.")
+}
+
+# Optionally, display the duplicate values
+if (!is_unique) {
+  duplicate_values <- function_column[duplicated(function_column)]
+  print("Duplicate values:")
+  print(unique(duplicate_values))
+}
+```
+
+### Step 5. If there are duplicate functions, combine the functions with the gene abbreviations and create a new column with this info
+```{r}
+# Combine "Function" and "Gene.abbreviation" columns to create "Function_GeneAbbreviation"
+metabolic_function <- metabolic_function %>%
+  mutate(Function_GeneAbbreviation = paste(Function, "[", Gene.abbreviation, "]"))
+# Move "Function_GeneAbbreviation" to be the first column
+metabolic_function <- metabolic_function %>%
+  select(Function_GeneAbbreviation, everything())
+```
+
+### Step 6. Remove the old "Function", "Category", and "Gene.abbreviation" columns
+```{r}
+metabolic_function <- metabolic_function %>%
+  select(-Function, -Category, -Gene.abbreviation)
+```
+
+
+### Step 7. Clean-up the Mag_IDs which are the columns
+```{r}
+colnames(metabolic_function) <- gsub("X", "", colnames(metabolic_function))
+colnames(metabolic_function) <- gsub(".Function.presence", "", colnames(metabolic_function))
+```
+
+### Step 8. We need to transpose the data so that the MAGs are in rows not columns
+```{r}
+metabolic_function_transpose <- as.data.frame(t(metabolic_function))
+#View(metabolic_function_transpose)
+```
+
+### Step 9. Assign the first row as column names and then remove it
+```{r}
+colnames(metabolic_function_transpose) <- metabolic_function_transpose[1, ]
+metabolic_function_transpose <- metabolic_function_transpose[-1, ]
+metabolic_function_transpose <- type.convert(metabolic_function_transpose, as.is = TRUE)
+```
+
+### Step 10. Make the Bin_IDs an actual column so we can match the Bin_IDs to simpler Mag_IDs
+```{r}
+# Convert row names to a column
+metabolic_function_transpose <- cbind(RowName = rownames(metabolic_function_transpose), metabolic_function_transpose)
+
+# Rename the new column if you want a specific name
+names(metabolic_function_transpose)[1] <- "Bin_ID"
+
+```
+
+### Step 11. Merge the cleaned functions dataframe with the file containing simple Mag_IDs and taxonomic information
+```{r}
+metabolic_function_transpose_w_simple_Mag_IDs <- merge(metabolic_function_transpose, simple_IDs, by="Bin_ID" )
+#View(metabolic_function_transpose_w_simple_Mag_IDs)
+```
+
+### Step 12. Sort the data frame
+```{r}
+# Extract the number from the Mag_ID column and create a sorting key
+metabolic_function_transpose_w_simple_Mag_IDs <- metabolic_function_transpose_w_simple_Mag_IDs %>%
+  mutate(SortingKey = as.numeric(gsub(".*\\.(\\d+)\\s.*", "\\1", Mag_Fam)))
+
+# Sort the dataframe by the new sorting key column
+metabolic_function_transpose_w_simple_Mag_IDs <- metabolic_function_transpose_w_simple_Mag_IDs %>%
+  arrange(SortingKey)  
+
+# Display the first few rows of the sorted and subsetted dataframe
+colnames(metabolic_function_transpose_w_simple_Mag_IDs)
+
+```
+
+### Step 13. Subset the columns to be used to plot the heatmap
+```{r}
+metabolic_function_transpose_w_simple_Mag_IDs_subset <- metabolic_function_transpose_w_simple_Mag_IDs %>%
+  select(107, 2:105)
+```
+
+### Step 14. Always `View` your data
+```{r}
+View(metabolic_function_transpose_w_simple_Mag_IDs_subset)
+```
+
+### Step 15. Extract data to create the heatmap
+```{r}
+# Extract the numeric data for the heatmap
+significant_mags <- c("MAG.1 (f_SHLQ01)",
+                   "MAG.2 (f_SHLQ01)",
+                   "MAG.4 (f_Amoebophilaceae)",
+                   "MAG.5 (f_Amoebophilaceae)",
+                   "MAG.7 (f_Microscillaceae)",
+                   "MAG.19 (f_Flavobacteriaceae)",
+                   "MAG.29 (f_Schleiferiaceae)",
+                   "MAG.41 (f_Promineofilaceae)",
+                   "MAG.43 (f_Promineofilaceae)",
+                   "MAG.45 (f_Microcoleaceae)",
+                   "MAG.52 (f_Cyanobiaceae)",
+                   "MAG.67 (f_Maricaulaceae)",
+                   "MAG.87 (f_Rhodobacteraceae)",
+                   "MAG.89 (f_Rhodobacteraceae)",
+                   "MAG.103 (f_Alteromonadaceae)",
+                   "MAG.106 (f_Alteromonadaceae)",
+                   "MAG.107 (f_Alteromonadaceae)",
+                   "MAG.108 (f_Vibrionaceae)",
+                   "MAG.109 (f_Vibrionaceae)",
+                   "MAG.112 (f_Cellvibrionaceae)",
+                   "MAG.116 (f_DSM-6294)",
+                   "MAG.117 (f_DT-91)",
+                   "MAG.119 (f_Endozoicomonadaceae)",
+                   "MAG.136 (f_Marinomonadaceae)")
+
+# Filter the dataframe to include only the specified MAGs
+heatmap_data <- metabolic_function_transpose_w_simple_Mag_IDs_subset %>%
+  filter(Mag_Fam %in% significant_mags)
+
+# Set rownames
+rownames(heatmap_data) <- heatmap_data$Mag_Fam
+
+# Remove the Mag_Fam column
+heatmap_data <- heatmap_data %>%
+  select(-Mag_Fam)
+```
+
+### Step 16. Extract data to create the heatmap
+```{r}
+# Generate the heatmap
+svg(file = "metabolic_heatmap_sargPatch_MAGs.svg", width = 40, height = 30)
+pheatmap(as.matrix(heatmap_data),
+         cluster_rows = FALSE,
+         cluster_cols = FALSE,
+         color = c("white", "black"),
+         main = "Presence/Absence of Each MAG",
+         display_numbers = FALSE,
+         annotation_names_row = TRUE,
+         cellwidth = 20,  # Adjust as necessary to achieve the desired size
+         cellheight = 20,  # Adjust as necessary to achieve the desired size
+         border_color = "gray20",  # Very light gray
+         fontsize_row = 14,  # Increase row label font size
+         fontsize_col = 14)  # Increase column label font size
+dev.off()
+```
+
